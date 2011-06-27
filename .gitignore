@@ -1,1 +1,3 @@
 *.pyc
+*.egg-info
+msgpack_pure/__version__.py

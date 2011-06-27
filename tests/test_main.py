@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import sys,os.path
+sys.path = [os.path.join(os.path.dirname(sys.argv[0]),'..')] + sys.path
+
 import struct
 import msgpack
 import msgpack_pure

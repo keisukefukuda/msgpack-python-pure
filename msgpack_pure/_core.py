@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import struct
+import mmap
 
 # Object headers
 _NIL = 0xc0
@@ -186,13 +187,24 @@ def _apply_hook(obj, **kwargs):
         obj = default(obj)
 
     return obj
-    
 
-def read_obj(packed, **kwargs):
-    if packed is None or len(packed) == 0: return None,0
-    b = ord(packed[0])
-    packed = packed[1:]
-    consumed = 1 # b's 1 byte
+
+def unpacks(packed, **kwargs):
+    if packed is None or len(packed) == 0: return None
+
+    mp = mmap.mmap(-1, len(packed))
+    mp.write(packed)
+    mp.seek(0)
+
+    obj = read_obj(mp, **kwargs)
+
+    return obj
+
+def read_obj(mp, **kwargs):
+    try:
+        b = ord(mp.read_byte())
+    except ValueError,e:
+        return None
 
     obj_hook = kwargs.get('object_hook')
     ary_hook = kwargs.get('list_hook')
@@ -204,55 +216,38 @@ def read_obj(packed, **kwargs):
 
     # Negative Fixnum
     elif b & 0xE0 == 0xE0:
-        obj, = struct.unpack("b", chr(b))
+        obj = struct.unpack("b", chr(b))[0]
 
     elif b == _UINT8:
-        # TODO: error check
-        obj, = struct.unpack("B", packed[0])
-        consumed += 1
+        obj = struct.unpack("B", mp.read_byte())[0]
 
     elif b == _INT8:
-        obj, = struct.unpack("b", packed[:1])
-        consumed += 1
+        obj = struct.unpack("b", mp.read_byte())[0]
 
     elif b == _UINT16:
-        # TODO: error check
-        obj, = struct.unpack(">H", packed[:2])
-        consumed += 2
+        obj = struct.unpack(">H", mp.read(2))[0]
 
     elif b == _INT16:
-        # TODO: error check
-        obj, = struct.unpack(">h", packed[:2])
-        consumed += 2
+        obj = struct.unpack(">h", mp.read(2))[0]
 
     elif b == _UINT32:
-        # TODO: error check
-        obj, = struct.unpack(">I", packed[:4])
-        consumed += 4
+        obj = struct.unpack(">I", mp.read(4))[0]
 
     elif b == _INT32:
-        # TODO: error check
-        obj, = struct.unpack(">i", packed[:4])
-        consumed += 4
+        obj = struct.unpack(">i", mp.read(4))[0]
 
     elif b == _UINT64:
-        # TODO: error check
         # I'm not sure that format 'Q' is always available...
-        obj, = struct.unpack(">Q", packed[:8])
-        consumed += 8
+        obj = struct.unpack(">Q", mp.read(8))[0]
 
     elif b == _INT64:
-        # TODO: error check
-        obj, = struct.unpack(">q", packed[:8])
-        consumed += 8
+        obj = struct.unpack(">q", mp.read(8))[0]
 
     elif b == _FLOAT:
-        obj, = struct.unpack(">f", packed[:4])
-        consumed += 4
+        obj = struct.unpack(">f", mp.read(4))[0]
 
     elif b == _DOUBLE:
-        obj, = struct.unpack(">d", packed[:8])
-        consumed += 8
+        obj = struct.unpack(">d", mp.read(8))[0]
 
     elif b == _NIL:   obj = None
     elif b == _TRUE:  obj = True
@@ -260,112 +255,74 @@ def read_obj(packed, **kwargs):
 
     elif (b & 0xe0) == _FIX_RAW:
         nbytes = b & 0x1F
-        obj, = struct.unpack("%ds" % nbytes, packed[:nbytes])
-        consumed += nbytes
+        obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
 
     elif b == _RAW16:
-        nbytes, = struct.unpack(">H", packed[:2])
-        packed = packed[2:]
-        obj, = struct.unpack("%ds" % nbytes, packed[:nbytes])
-        consumed += nbytes + 2
+        nbytes, = struct.unpack(">H", mp.read(2))
+        obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
 
     elif b == _RAW32:
-        nbytes, = struct.unpack(">I", packed[:4])
-        packed = packed[4:]
-        obj, = struct.unpack("%ds" % nbytes, packed[:nbytes])
-        consumed += nbytes + 4
+        nbytes = struct.unpack(">I", mp.read(4))[0]
+        obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
 
     elif (b & 0xF0) == _FIX_ARY:
         sz = b & 0x0F
-        obj,c = _read_list_body(packed, sz, **kwargs)
-        consumed += c
+        obj = _read_list_body(mp, sz, **kwargs)
 
     elif b == _ARY16:
-        sz, = struct.unpack(">H", packed[:2])
-        consumed += 2
-        packed = packed[2:]
-
-        obj,c = _read_list_body(packed, sz, **kwargs)
-        consumed += c
+        sz = struct.unpack(">H", mp.read(2))[0]
+        obj = _read_list_body(mp, sz, **kwargs)
 
     elif b == _ARY32:
-        sz, = struct.unpack(">I", packed[:4])
-        consumed += 4
-        packed = packed[4:]
-
-        obj,c = _read_list_body(packed, sz, **kwargs)
-        consumed += c
+        sz = struct.unpack(">I", mp.read(4))[0]
+        obj = _read_list_body(mp, sz, **kwargs)
 
     elif (b & 0xF0) == _FIX_MAP:
         sz = b & 0x0F
-        obj,c = _read_map_body(packed, sz, **kwargs)
-        consumed += c
+        obj = _read_map_body(mp, sz, **kwargs)
 
     elif b == _MAP16:
-        sz, = struct.unpack(">H", packed[:2])
-        consumed += 2
-        packed = packed[2:]
-
-        obj,c = _read_map_body(packed, sz, **kwargs)
-        consumed += c
+        sz = struct.unpack(">H", mp.read(2))[0]
+        obj = _read_map_body(mp, sz, **kwargs)
 
     elif b == _MAP32:
-        sz, = struct.unpack(">I", packed[:4])
-        consumed += 4
-        packed = packed[4:]
-
-        obj, c = _read_map_body(packed, sz, **kwargs)
-        consumed += c
+        sz = struct.unpack(">I", mp.read(4))[0]
+        obj = _read_map_body(mp, sz, **kwargs)
 
     else:
         raise RuntimeError("Unknown object header: 0x%x" % b)
 
-    return _apply_hook(obj, **kwargs), consumed
+    return _apply_hook(obj, **kwargs)
 
 
-def _read_list_body(packed, sz, **kwargs):
-    obj = ()
-    consumed = 0
+def _read_list_body(mp, sz, **kwargs):
+    obj = []
     for i in range(sz):
-        o,c = read_obj(packed)
+        o = read_obj(mp, **kwargs)
         o = _apply_hook(o, **kwargs)
-        obj = obj + (o,)
-        packed = packed[c:]
-        consumed += c
+        obj.append(o)
 
-    return _apply_hook(obj, **kwargs), consumed
+    obj = tuple(obj)
+    return _apply_hook(obj, **kwargs)
 
-def _read_map_body(packed, sz, **kwargs):
+def _read_map_body(mp, sz, **kwargs):
     obj_hook = kwargs.get('object_hook')
     ary_hook = kwargs.get('list_hook')
     default  = kwargs.get('default')
 
     obj = {}
-    consumed = 0
 
     for i in range(sz):
-        k,c = read_obj(packed)
-        consumed += c
-        packed = packed[c:]
-
-        v,c = read_obj(packed)
-        consumed += c
-        packed = packed[c:]
+        k = read_obj(mp, **kwargs)
+        v = read_obj(mp, **kwargs)
 
         k = _apply_hook(k, **kwargs)
         v = _apply_hook(v, **kwargs)
 
         obj[k] = v
 
-    return _apply_hook(obj, **kwargs), consumed
+    return _apply_hook(obj, **kwargs)
 
-
-def unpacks(packed, **kwargs):
-    if packed is None or len(packed) == 0: return None
-
-    obj, consumed = read_obj(packed, **kwargs)
-
-    return obj
 
 unpack = unpackb = unpacks
 pack = packb = packs

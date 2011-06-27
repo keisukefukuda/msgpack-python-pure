@@ -17,6 +17,7 @@ def check(length, obj):
 def test_1():
     for o in [None, True, False, 0, 1, (1 << 6), (1 << 7) - 1, -1,
               -((1<<5)-1), -(1<<5)]:
+        print o
         check(1, o)
 
 def test_2():

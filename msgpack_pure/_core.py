@@ -99,7 +99,7 @@ def packs(obj, **kwargs):
         elif 0 <= obj <= _UINT64_MAX:
             return struct.pack(">BQ", _UINT64, obj)
 
-        raise RuntimeError, "Integer value out of range"
+        raise RuntimeError("Integer value out of range")
 
     # raw bytes
     if isinstance(obj, str) or isinstance(obj, unicode):
@@ -163,7 +163,7 @@ def packs(obj, **kwargs):
         return packed
 
     # otherwise: unknown type
-    raise TypeError
+    raise TypeError()
 
 def _apply_hook(obj, **kwargs):
     obj_hook = kwargs.get('object_hook')
@@ -172,7 +172,7 @@ def _apply_hook(obj, **kwargs):
 
     if ary_hook and (isinstance(obj, list) or isinstance(obj, tuple)):
         if not callable(ary_hook):
-            raise Type("list_hook must be a callable.")
+            raise TypeError("list_hook must be a callable.")
         obj = ary_hook(obj)
 
     elif obj_hook and isinstance(obj, dict):
@@ -318,7 +318,7 @@ def read_obj(packed, **kwargs):
         consumed += c
 
     else:
-        raise RuntimeError, "Unknown object header: 0x%x" % b
+        raise RuntimeError("Unknown object header: 0x%x" % b)
 
     return _apply_hook(obj, **kwargs), consumed
 

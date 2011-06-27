@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
-version = (0, 1, 0)
+version = (0, 1, 1)
 
 import sys, os
-from glob import glob
-from setuptools import setup
+from setuptools import setup, find_packages
 
 # make msgpack_pure/__verison__.py
 f = open('msgpack_pure/__version__.py', 'w')
@@ -23,23 +22,26 @@ What's MessagePack? (from http://msgpack.org/)
  focused on high performance. It is like JSON, but very fast and small.
 """
 
-setup(name='msgpack-pure',
-      author='Keisuke Fukuda',
-      author_email='keisukefukuda@gmail.com',
-      license="Apache License 2",
-      version=version_str,
-      packages=['msgpack_pure'],
-      description=desc,
-      long_description=long_desc,
-      url='http://msgpack.org/',
-      download_url='http://pypi.python.org/pypi/msgpack-pure/',
-      test_suite="nose.collector",
-      classifiers=[
-          'Programming Language :: Python :: 2',
-          'Programming Language :: Python :: 3',
-          'Development Status :: 3 - Alpha',
-          'Intended Audience :: Developers',
-          'License :: OSI Approved :: Apache Software License',
-          ]
-      )
+setup(
+    name='msgpack-pure',
+    version=version_str,
+    packages=find_packages( exclude=["tests"] ),
+    
+    author='Keisuke Fukuda',
+    author_email='keisukefukuda@gmail.com',
+    license="Apache License 2",
+    description = desc,
+    long_description = long_desc,
+    url='http://msgpack.org/',
+    download_url='http://pypi.python.org/pypi/msgpack-pure/',
+    classifiers=[
+    'Programming Language :: Python :: 2',
+    'Programming Language :: Python :: 3',
+    'Development Status :: 3 - Alpha',
+    'Intended Audience :: Developers',
+    'License :: OSI Approved :: Apache Software License',
+    ],
+    
+    test_suite="nose.collector"
+    )
 

@@ -76,6 +76,20 @@ def test_array():
 def test_nested_array():
     _check( ((),) )
 
+def test_map():
+    _check( {} )
+    _check( {1:2} )
+    _check( {1 : "foo", "bar" : 999999} )
+
+    # map 16
+    _check_decode( [0xde, 0x00, 0x01, 1, 1] )
+
+    # map 32
+    _check_decode( [0xdf, 0x00, 0x00, 0x00, 0x02, 1,1, 2,2] )
+
+def test_nested_array():
+    _check( {1 : {2 : 3}, 4 : {5 : 6} } )
+
 
 if __name__ == "__main__":
     import nose

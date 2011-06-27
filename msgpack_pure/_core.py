@@ -27,6 +27,10 @@ _FIX_ARY = 0x90
 _ARY16   = 0xdc
 _ARY32   = 0xdd
 
+_FIX_MAP = 0x80
+_MAP16   = 0xde
+_MAP32   = 0xdf
+
 
 # Constants
 _INT8_MAX   = 0x7F
@@ -44,50 +48,62 @@ _UINT32_MAX = 0xFFFFFFFF
 _UINT64_MAX = 0xFFFFFFFFFFFFFFFF
 
 def packs(obj):
-    if obj is None:
-        return struct.pack("B", _NIL)
+    if obj == None:  return chr(_NIL)
     
+    if isinstance(obj,bool) and obj:
+        return chr(_TRUE)
+    
+    if isinstance(obj,bool) and obj == False:
+        return chr(_FALSE)
+ 
     if isinstance(obj, int) or isinstance(obj, long):
+        print "_UINT32_MAX = ", _UINT32_MAX
+        print "_INT32_MAX = ", _INT32_MAX
         # Positive Fixnum
         if 0 <= obj and obj <= 127:
-                return struct.pack("B", obj)
+            return struct.pack("B", obj)
 
         # Negative Fixnum
-        if -32 <= obj and obj <= 0:
+        elif -32 <= obj and obj <= 0:
             return struct.pack("b", obj)
+
+        # uint 8
+        elif 0 <= obj <= _UINT8_MAX:
+            return struct.pack("BB", _UINT8, obj)
         
-        if _INT8_MIN <= obj and obj <= _INT8_MAX:
+        # int 8
+        elif _INT8_MIN <= obj and obj <= _INT8_MAX:
             return struct.pack(">Bb", _INT8, obj)
 
-        if _INT16_MIN <= obj and obj <= _INT16_MAX:
-            return struct.pack(">Bh", _INT16, obj)
-
-        if _INT32_MIN <= obj and obj <= _INT32_MAX:
-            return struct.pack(">Bi", _INT32, obj)
-        
-        if _INT64_MIN <= obj and obj <= _INT64_MAX:
-            return struct.pack(">Bq", _INT64, obj)
-
-        # try unsigned values
-        # uint 8
-        if obj <= _UINT8_MAX:
-            return struct.pack("BB", _UINT8, obj)
-
         # uint 16
-        elif obj <= _UINT16_MAX:
+        elif 0 <= obj <= _UINT16_MAX:
             return struct.pack(">BH", _UINT16, obj)
 
+        elif _INT16_MIN <= obj and obj <= _INT16_MAX:
+            return struct.pack(">Bh", _INT16, obj)
+
+        # int 32
+        elif _INT32_MIN <= obj and obj <= _INT32_MAX:
+            return struct.pack(">Bi", _INT32, obj)
+        
         # uint 32
-        elif obj <= _UINT32_MAX:
+        elif 0 <= obj <= _UINT32_MAX:
             return struct.pack(">BI", _UINT32, obj)
-            
+
+        # int 64
+        elif _INT64_MIN <= obj and obj <= _INT64_MAX:
+            return struct.pack(">Bq", _INT64, obj)
+
         # uint64
-        elif obj <= _UINT64_MAX:
+        elif 0 <= obj <= _UINT64_MAX:
             return struct.pack(">BQ", _UINT64, obj)
         
         raise RuntimeError, "Integer value out of range"
 
-    if isinstance(obj, str):
+    # raw bytes
+    if isinstance(obj, str) or isinstance(obj, unicode):
+        if isinstance(obj, unicode):
+            obj = obj.encode('utf-8')
         nbytes = len(obj)
         if nbytes <= 31:
             mark = chr(_FIX_RAW + nbytes)
@@ -100,9 +116,11 @@ def packs(obj):
         elif nbytes <= 2**32-1:
             return struct.pack(">BI%ds" % nbytes, _RAW32, nbytes, obj)
 
+    # float
     if isinstance(obj, float):
         return struct.pack(">Bd", _DOUBLE, obj)
 
+    # array
     if isinstance(obj, list) or isinstance(obj, tuple):
         packed = ""
         sz = len(obj)
@@ -111,9 +129,41 @@ def packs(obj):
             packed += chr(_FIX_ARY + (sz & 0x0f))
             for i in range(sz):
                 packed += packs(obj[i])
-                
+
+        elif sz <= 2**16-1:
+            packed += chr(_ARY16)
+            packed += struct.pack(">H", sz)
+            for i in range(sz):
+                packed += packs(obj[i])
+
+        elif sz <= 2**32-1:
+            packed += chr(_ARY32)
+            packed += struct.pack(">I", sz)
+            for i in range(sz):
+                packed += packs(obj[i])
+
         return packed
-        
+
+    # map
+    if isinstance(obj, dict):
+        sz = len(obj)
+        packed = ""
+        if sz <= 15:
+            packed += chr(_FIX_MAP + sz)
+        elif sz <= 2**16-1:
+            packed += struct.pack(">BH", _MAP16, sz)
+        elif sz <= 2**32-1:
+            packed += struct.pack(">BI", _MAP32, sz)
+
+        for (k,v) in obj.iteritems():
+            packed += packs(k)
+            packed += packs(v)
+
+        return packed
+
+    # otherwise: unknown type
+    raise TypeError
+
 
 def read_obj(packed):
     if packed is None or len(packed) == 0: return None,0
@@ -218,7 +268,28 @@ def read_obj(packed):
         
         obj,c = _read_list_body(packed, sz)
         consumed += c
-    
+
+    elif (b & 0xF0) == _FIX_MAP:
+        sz = b & 0x0F
+        obj,c = _read_map_body(packed, sz)
+        consumed += c
+
+    elif b == _MAP16:
+        sz, = struct.unpack(">H", packed[:2])
+        consumed += 2
+        packed = packed[2:]
+
+        obj,c = _read_map_body(packed, sz)
+        consumed += c
+
+    elif b == _MAP32:
+        sz, = struct.unpack(">I", packed[:4])
+        consumed += 4
+        packed = packed[4:]
+
+        obj, c = _read_map_body(packed, sz)
+        consumed += c
+        
     else:
         raise RuntimeError, "Unknown object header: 0x%x" % b
 
@@ -234,6 +305,24 @@ def _read_list_body(packed, sz):
         consumed += c
 
     return obj, consumed
+
+def _read_map_body(packed, sz):
+    obj = {}
+    consumed = 0
+
+    for i in range(sz):
+        k,c = read_obj(packed)
+        consumed += c
+        packed = packed[c:]
+
+        v,c = read_obj(packed)
+        consumed += c
+        packed = packed[c:]
+
+        obj[k] = v
+        
+    return obj, consumed
+    
 
 def unpacks(packed):
     if packed is None or len(packed) == 0: return None

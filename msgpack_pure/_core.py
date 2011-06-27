@@ -47,18 +47,19 @@ _UINT16_MAX = 0xFFFF
 _UINT32_MAX = 0xFFFFFFFF
 _UINT64_MAX = 0xFFFFFFFFFFFFFFFF
 
-def packs(obj):
+def packs(obj, **kwargs):
+    if kwargs.get('default'):
+        obj = kwargs['default'](obj)
+
     if obj == None:  return chr(_NIL)
-    
+
     if isinstance(obj,bool) and obj:
         return chr(_TRUE)
-    
+
     if isinstance(obj,bool) and obj == False:
         return chr(_FALSE)
- 
+
     if isinstance(obj, int) or isinstance(obj, long):
-        print "_UINT32_MAX = ", _UINT32_MAX
-        print "_INT32_MAX = ", _INT32_MAX
         # Positive Fixnum
         if 0 <= obj and obj <= 127:
             return struct.pack("B", obj)
@@ -70,7 +71,7 @@ def packs(obj):
         # uint 8
         elif 0 <= obj <= _UINT8_MAX:
             return struct.pack("BB", _UINT8, obj)
-        
+
         # int 8
         elif _INT8_MIN <= obj and obj <= _INT8_MAX:
             return struct.pack(">Bb", _INT8, obj)
@@ -85,7 +86,7 @@ def packs(obj):
         # int 32
         elif _INT32_MIN <= obj and obj <= _INT32_MAX:
             return struct.pack(">Bi", _INT32, obj)
-        
+
         # uint 32
         elif 0 <= obj <= _UINT32_MAX:
             return struct.pack(">BI", _UINT32, obj)
@@ -97,7 +98,7 @@ def packs(obj):
         # uint64
         elif 0 <= obj <= _UINT64_MAX:
             return struct.pack(">BQ", _UINT64, obj)
-        
+
         raise RuntimeError, "Integer value out of range"
 
     # raw bytes
@@ -128,19 +129,19 @@ def packs(obj):
         if sz <= 15:
             packed += chr(_FIX_ARY + (sz & 0x0f))
             for i in range(sz):
-                packed += packs(obj[i])
+                packed += packs(obj[i], **kwargs)
 
         elif sz <= 2**16-1:
             packed += chr(_ARY16)
             packed += struct.pack(">H", sz)
             for i in range(sz):
-                packed += packs(obj[i])
+                packed += packs(obj[i], **kwargs)
 
         elif sz <= 2**32-1:
             packed += chr(_ARY32)
             packed += struct.pack(">I", sz)
             for i in range(sz):
-                packed += packs(obj[i])
+                packed += packs(obj[i], **kwargs)
 
         return packed
 
@@ -156,20 +157,46 @@ def packs(obj):
             packed += struct.pack(">BI", _MAP32, sz)
 
         for (k,v) in obj.iteritems():
-            packed += packs(k)
-            packed += packs(v)
+            packed += packs(k, **kwargs)
+            packed += packs(v, **kwargs)
 
         return packed
 
     # otherwise: unknown type
     raise TypeError
 
+def _apply_hook(obj, **kwargs):
+    obj_hook = kwargs.get('object_hook')
+    ary_hook = kwargs.get('list_hook')
+    default  = kwargs.get('default')
 
-def read_obj(packed):
+    if ary_hook and (isinstance(obj, list) or isinstance(obj, tuple)):
+        if not callable(ary_hook):
+            raise Type("list_hook must be a callable.")
+        obj = ary_hook(obj)
+
+    elif obj_hook and isinstance(obj, dict):
+        if not callable(obj_hook):
+            raise TypeError("object_hook must be a callable.")
+        obj = obj_hook(obj)
+
+    elif default:
+        if not callable(default):
+            raise TypeError("default must be a callable.")
+        obj = default(obj)
+
+    return obj
+    
+
+def read_obj(packed, **kwargs):
     if packed is None or len(packed) == 0: return None,0
     b = ord(packed[0])
     packed = packed[1:]
     consumed = 1 # b's 1 byte
+
+    obj_hook = kwargs.get('object_hook')
+    ary_hook = kwargs.get('list_hook')
+    default  = kwargs.get('default')
 
     # Positive Fixnum
     if b & (1 << 7) == 0:
@@ -222,7 +249,7 @@ def read_obj(packed):
     elif b == _FLOAT:
         obj, = struct.unpack(">f", packed[:4])
         consumed += 4
-        
+
     elif b == _DOUBLE:
         obj, = struct.unpack(">d", packed[:8])
         consumed += 8
@@ -247,31 +274,31 @@ def read_obj(packed):
         packed = packed[4:]
         obj, = struct.unpack("%ds" % nbytes, packed[:nbytes])
         consumed += nbytes + 4
-    
+
     elif (b & 0xF0) == _FIX_ARY:
         sz = b & 0x0F
-        obj,c = _read_list_body(packed, sz)
+        obj,c = _read_list_body(packed, sz, **kwargs)
         consumed += c
 
     elif b == _ARY16:
         sz, = struct.unpack(">H", packed[:2])
         consumed += 2
         packed = packed[2:]
-        
-        obj,c = _read_list_body(packed, sz)
+
+        obj,c = _read_list_body(packed, sz, **kwargs)
         consumed += c
 
     elif b == _ARY32:
         sz, = struct.unpack(">I", packed[:4])
         consumed += 4
         packed = packed[4:]
-        
-        obj,c = _read_list_body(packed, sz)
+
+        obj,c = _read_list_body(packed, sz, **kwargs)
         consumed += c
 
     elif (b & 0xF0) == _FIX_MAP:
         sz = b & 0x0F
-        obj,c = _read_map_body(packed, sz)
+        obj,c = _read_map_body(packed, sz, **kwargs)
         consumed += c
 
     elif b == _MAP16:
@@ -279,7 +306,7 @@ def read_obj(packed):
         consumed += 2
         packed = packed[2:]
 
-        obj,c = _read_map_body(packed, sz)
+        obj,c = _read_map_body(packed, sz, **kwargs)
         consumed += c
 
     elif b == _MAP32:
@@ -287,26 +314,32 @@ def read_obj(packed):
         consumed += 4
         packed = packed[4:]
 
-        obj, c = _read_map_body(packed, sz)
+        obj, c = _read_map_body(packed, sz, **kwargs)
         consumed += c
-        
+
     else:
         raise RuntimeError, "Unknown object header: 0x%x" % b
 
-    return obj, consumed
+    return _apply_hook(obj, **kwargs), consumed
 
-def _read_list_body(packed, sz):
+
+def _read_list_body(packed, sz, **kwargs):
     obj = ()
     consumed = 0
     for i in range(sz):
         o,c = read_obj(packed)
+        o = _apply_hook(o, **kwargs)
         obj = obj + (o,)
         packed = packed[c:]
         consumed += c
 
-    return obj, consumed
+    return _apply_hook(obj, **kwargs), consumed
 
-def _read_map_body(packed, sz):
+def _read_map_body(packed, sz, **kwargs):
+    obj_hook = kwargs.get('object_hook')
+    ary_hook = kwargs.get('list_hook')
+    default  = kwargs.get('default')
+
     obj = {}
     consumed = 0
 
@@ -319,16 +352,19 @@ def _read_map_body(packed, sz):
         consumed += c
         packed = packed[c:]
 
-        obj[k] = v
-        
-    return obj, consumed
-    
+        k = _apply_hook(k, **kwargs)
+        v = _apply_hook(v, **kwargs)
 
-def unpacks(packed):
+        obj[k] = v
+
+    return _apply_hook(obj, **kwargs), consumed
+
+
+def unpacks(packed, **kwargs):
     if packed is None or len(packed) == 0: return None
 
-    obj, consumed = read_obj(packed)
-        
+    obj, consumed = read_obj(packed, **kwargs)
+
     return obj
 
 unpack = unpackb = unpacks

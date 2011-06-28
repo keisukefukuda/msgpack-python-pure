@@ -20,6 +20,11 @@ What's MessagePack? (from http://msgpack.org/)
 
  MessagePack is a binary-based efficient data interchange format that is
  focused on high performance. It is like JSON, but very fast and small.
+
+I strongly recomment to use msgpack by INADA Naoki if you can,
+because it's core is written in C and much faster than msgpack-pure.
+msgpack-pure is for environments on which C-extention cannot be installed/compiled,
+including hosting, Windows and Google App Engine.
 """
 
 setup(

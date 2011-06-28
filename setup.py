@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-version = (0, 1, 1)
+version = (0, 1, 2)
 
 import sys, os
 from setuptools import setup, find_packages
@@ -36,7 +36,7 @@ setup(
     download_url='http://pypi.python.org/pypi/msgpack-pure/',
     classifiers=[
     'Programming Language :: Python :: 2',
-    'Programming Language :: Python :: 3',
+    #'Programming Language :: Python :: 3',
     'Development Status :: 3 - Alpha',
     'Intended Audience :: Developers',
     'License :: OSI Approved :: Apache Software License',

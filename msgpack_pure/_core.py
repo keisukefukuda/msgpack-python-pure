@@ -166,163 +166,163 @@ def packs(obj, **kwargs):
     # otherwise: unknown type
     raise TypeError()
 
-def _apply_hook(obj, **kwargs):
-    obj_hook = kwargs.get('object_hook')
-    ary_hook = kwargs.get('list_hook')
-    default  = kwargs.get('default')
 
-    if ary_hook and (isinstance(obj, list) or isinstance(obj, tuple)):
-        if not callable(ary_hook):
+class Unpacker():
+    def __init__(self, **kwargs):
+        self.default_hook = kwargs.get('default')
+        self.object_hook  = kwargs.get('object_hook')
+        self.list_hook    = kwargs.get('list_hook')
+
+        if self.list_hook and not callable(self.list_hook):
             raise TypeError("list_hook must be a callable.")
-        obj = ary_hook(obj)
-
-    elif obj_hook and isinstance(obj, dict):
-        if not callable(obj_hook):
+        
+        if self.object_hook and not callable(self.object_hook):
             raise TypeError("object_hook must be a callable.")
-        obj = obj_hook(obj)
+        
+        if self.default_hook and not callable(self.default_hook):
+            raise TypeError("default_hook must be a callable.")
+            
 
-    elif default:
-        if not callable(default):
-            raise TypeError("default must be a callable.")
-        obj = default(obj)
+    def apply_hook(self, obj, **kwargs):
+        if self.list_hook and (isinstance(obj, list) or isinstance(obj, tuple)):
+            obj = self.list_hook(obj)
 
-    return obj
+        elif self.object_hook and isinstance(obj, dict):
+            obj = self.object_hook(obj)
+
+        elif self.default_hook:
+            obj = self.default_hook(obj)
+
+        return obj
+
+    def unpacks(self, packed):
+        if packed is None or len(packed) == 0: return None
+
+        mp = mmap.mmap(-1, len(packed))
+        mp.write(packed)
+        mp.seek(0)
+
+        obj = self.read_obj(mp)
+
+        return obj
+
+    def read_obj(self, mp):
+        try:
+            b = ord(mp.read_byte())
+        except ValueError,e:
+            return None
+
+        # Positive Fixnum
+        if b & (1 << 7) == 0:
+            obj = b
+
+            # Negative Fixnum
+        elif b & 0xE0 == 0xE0:
+            obj = struct.unpack("b", chr(b))[0]
+
+        elif b == _UINT8:
+            obj = struct.unpack("B", mp.read_byte())[0]
+
+        elif b == _INT8:
+            obj = struct.unpack("b", mp.read_byte())[0]
+
+        elif b == _UINT16:
+            obj = struct.unpack(">H", mp.read(2))[0]
+
+        elif b == _INT16:
+            obj = struct.unpack(">h", mp.read(2))[0]
+
+        elif b == _UINT32:
+            obj = struct.unpack(">I", mp.read(4))[0]
+
+        elif b == _INT32:
+            obj = struct.unpack(">i", mp.read(4))[0]
+
+        elif b == _UINT64:
+            # I'm not sure that format 'Q' is always available...
+            obj = struct.unpack(">Q", mp.read(8))[0]
+
+        elif b == _INT64:
+            obj = struct.unpack(">q", mp.read(8))[0]
+
+        elif b == _FLOAT:
+            obj = struct.unpack(">f", mp.read(4))[0]
+
+        elif b == _DOUBLE:
+            obj = struct.unpack(">d", mp.read(8))[0]
+
+        elif b == _NIL:   obj = None
+        elif b == _TRUE:  obj = True
+        elif b == _FALSE: obj = False
+
+        elif (b & 0xe0) == _FIX_RAW:
+            nbytes = b & 0x1F
+            obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
+
+        elif b == _RAW16:
+            nbytes, = struct.unpack(">H", mp.read(2))
+            obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
+
+        elif b == _RAW32:
+            nbytes = struct.unpack(">I", mp.read(4))[0]
+            obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
+
+        elif (b & 0xF0) == _FIX_ARY:
+            sz = b & 0x0F
+            obj = self.read_list_body(mp, sz)
+
+        elif b == _ARY16:
+            sz = struct.unpack(">H", mp.read(2))[0]
+            obj = self.read_list_body(mp, sz)
+
+        elif b == _ARY32:
+            sz = struct.unpack(">I", mp.read(4))[0]
+            obj = self.read_list_body(mp, sz)
+
+        elif (b & 0xF0) == _FIX_MAP:
+            sz = b & 0x0F
+            obj = self.read_map_body(mp, sz)
+
+        elif b == _MAP16:
+            sz = struct.unpack(">H", mp.read(2))[0]
+            obj = self.read_map_body(mp, sz)
+
+        elif b == _MAP32:
+            sz = struct.unpack(">I", mp.read(4))[0]
+            obj = self.read_map_body(mp, sz)
+
+        else:
+            raise RuntimeError("Unknown object header: 0x%x" % b)
+
+        return self.apply_hook(obj)
 
 
+    def read_list_body(self, mp, sz):
+        obj = []
+        for i in range(sz):
+            o = self.read_obj(mp)
+            o = self.apply_hook(o)
+            obj.append(o)
+            
+        obj = tuple(obj)
+        return self.apply_hook(obj)
+
+    def read_map_body(self, mp, sz):
+        obj = {}
+
+        for i in range(sz):
+            k = self.read_obj(mp)
+            v = self.read_obj(mp)
+
+            k = self.apply_hook(k)
+            v = self.apply_hook(v)
+
+            obj[k] = v
+
+        return self.apply_hook(obj)
+    
 def unpacks(packed, **kwargs):
-    if packed is None or len(packed) == 0: return None
-
-    mp = mmap.mmap(-1, len(packed))
-    mp.write(packed)
-    mp.seek(0)
-
-    obj = read_obj(mp, **kwargs)
-
-    return obj
-
-def read_obj(mp, **kwargs):
-    try:
-        b = ord(mp.read_byte())
-    except ValueError,e:
-        return None
-
-    obj_hook = kwargs.get('object_hook')
-    ary_hook = kwargs.get('list_hook')
-    default  = kwargs.get('default')
-
-    # Positive Fixnum
-    if b & (1 << 7) == 0:
-        obj = b
-
-    # Negative Fixnum
-    elif b & 0xE0 == 0xE0:
-        obj = struct.unpack("b", chr(b))[0]
-
-    elif b == _UINT8:
-        obj = struct.unpack("B", mp.read_byte())[0]
-
-    elif b == _INT8:
-        obj = struct.unpack("b", mp.read_byte())[0]
-
-    elif b == _UINT16:
-        obj = struct.unpack(">H", mp.read(2))[0]
-
-    elif b == _INT16:
-        obj = struct.unpack(">h", mp.read(2))[0]
-
-    elif b == _UINT32:
-        obj = struct.unpack(">I", mp.read(4))[0]
-
-    elif b == _INT32:
-        obj = struct.unpack(">i", mp.read(4))[0]
-
-    elif b == _UINT64:
-        # I'm not sure that format 'Q' is always available...
-        obj = struct.unpack(">Q", mp.read(8))[0]
-
-    elif b == _INT64:
-        obj = struct.unpack(">q", mp.read(8))[0]
-
-    elif b == _FLOAT:
-        obj = struct.unpack(">f", mp.read(4))[0]
-
-    elif b == _DOUBLE:
-        obj = struct.unpack(">d", mp.read(8))[0]
-
-    elif b == _NIL:   obj = None
-    elif b == _TRUE:  obj = True
-    elif b == _FALSE: obj = False
-
-    elif (b & 0xe0) == _FIX_RAW:
-        nbytes = b & 0x1F
-        obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
-
-    elif b == _RAW16:
-        nbytes, = struct.unpack(">H", mp.read(2))
-        obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
-
-    elif b == _RAW32:
-        nbytes = struct.unpack(">I", mp.read(4))[0]
-        obj = struct.unpack("%ds" % nbytes, mp.read(nbytes))[0]
-
-    elif (b & 0xF0) == _FIX_ARY:
-        sz = b & 0x0F
-        obj = _read_list_body(mp, sz, **kwargs)
-
-    elif b == _ARY16:
-        sz = struct.unpack(">H", mp.read(2))[0]
-        obj = _read_list_body(mp, sz, **kwargs)
-
-    elif b == _ARY32:
-        sz = struct.unpack(">I", mp.read(4))[0]
-        obj = _read_list_body(mp, sz, **kwargs)
-
-    elif (b & 0xF0) == _FIX_MAP:
-        sz = b & 0x0F
-        obj = _read_map_body(mp, sz, **kwargs)
-
-    elif b == _MAP16:
-        sz = struct.unpack(">H", mp.read(2))[0]
-        obj = _read_map_body(mp, sz, **kwargs)
-
-    elif b == _MAP32:
-        sz = struct.unpack(">I", mp.read(4))[0]
-        obj = _read_map_body(mp, sz, **kwargs)
-
-    else:
-        raise RuntimeError("Unknown object header: 0x%x" % b)
-
-    return _apply_hook(obj, **kwargs)
-
-
-def _read_list_body(mp, sz, **kwargs):
-    obj = []
-    for i in range(sz):
-        o = read_obj(mp, **kwargs)
-        o = _apply_hook(o, **kwargs)
-        obj.append(o)
-
-    obj = tuple(obj)
-    return _apply_hook(obj, **kwargs)
-
-def _read_map_body(mp, sz, **kwargs):
-    obj_hook = kwargs.get('object_hook')
-    ary_hook = kwargs.get('list_hook')
-    default  = kwargs.get('default')
-
-    obj = {}
-
-    for i in range(sz):
-        k = read_obj(mp, **kwargs)
-        v = read_obj(mp, **kwargs)
-
-        k = _apply_hook(k, **kwargs)
-        v = _apply_hook(v, **kwargs)
-
-        obj[k] = v
-
-    return _apply_hook(obj, **kwargs)
-
+    return Unpacker(**kwargs).unpacks(packed)
 
 unpack = unpackb = unpacks
 pack = packb = packs

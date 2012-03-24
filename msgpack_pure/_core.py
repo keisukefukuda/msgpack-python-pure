@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import struct
-import mmap
+from cStringIO import StringIO
 
 # Object headers
 _NIL = 0xc0
@@ -198,17 +198,14 @@ class Unpacker():
     def unpacks(self, packed):
         if packed is None or len(packed) == 0: return None
 
-        mp = mmap.mmap(-1, len(packed))
-        mp.write(packed)
-        mp.seek(0)
-
-        obj = self.read_obj(mp)
-
+        sio = StringIO(packed)
+        sio.seek(0)
+        obj = self.read_obj(sio)
         return obj
 
     def read_obj(self, mp):
         try:
-            b = ord(mp.read_byte())
+            b = ord(mp.read(1))
         except ValueError,e:
             return None
 
@@ -221,10 +218,10 @@ class Unpacker():
             obj = struct.unpack("b", chr(b))[0]
 
         elif b == _UINT8:
-            obj = struct.unpack("B", mp.read_byte())[0]
+            obj = struct.unpack("B", mp.read(1))[0]
 
         elif b == _INT8:
-            obj = struct.unpack("b", mp.read_byte())[0]
+            obj = struct.unpack("b", mp.read(1))[0]
 
         elif b == _UINT16:
             obj = struct.unpack(">H", mp.read(2))[0]
